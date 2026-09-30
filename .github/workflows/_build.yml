@@ -1,0 +1,380 @@
+# Shared build job. Both run-workflows call this; neither can be run on its own,
+# so the inputs a stock build ignores are simply not offered by the stock form.
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      rom_url:
+        required: true
+        type: string
+      build_mode:
+        required: true
+        type: string
+      ace6t_ota_url:
+        required: false
+        type: string
+        default: ""
+      my_preload_url:
+        required: false
+        type: string
+        default: ""
+      youtube_morphe_url:
+        required: false
+        type: string
+        default: ""
+      enable_debloat:
+        required: false
+        type: boolean
+        default: true
+      enable_youtube_morphe:
+        required: false
+        type: boolean
+        default: true
+      enable_ggphotos_unlimited:
+        required: false
+        type: boolean
+        default: true
+      enable_disable_flag_secure:
+        required: false
+        type: boolean
+        default: true
+      enable_lock_assistant_bypass:
+        required: false
+        type: boolean
+        default: true
+      enable_skip_install_verify:
+        required: false
+        type: boolean
+        default: true
+      enable_ota_card_brand:
+        required: false
+        type: boolean
+        default: false
+      ota_card_signature:
+        required: false
+        type: string
+        default: ViOS
+    secrets:
+      PRIVATE_REPO_TOKEN:
+        required: true
+      RCLONE_CONFIG_BASE64:
+        required: true
+      GDRIVE_DESTINATION:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and upload ROM
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 2048
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            aapt aria2 git-lfs openjdk-21-jre-headless p7zip-full \
+            python3 rclone unzip zip zipalign
+
+      - name: Check required secrets
+        shell: bash
+        env:
+          PRIVATE_REPO_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          RCLONE_CONFIG_BASE64: ${{ secrets.RCLONE_CONFIG_BASE64 }}
+          GDRIVE_DESTINATION: ${{ secrets.GDRIVE_DESTINATION }}
+        run: |
+          test -n "$PRIVATE_REPO_TOKEN" || { echo "Missing PRIVATE_REPO_TOKEN"; exit 1; }
+          test -n "$RCLONE_CONFIG_BASE64" || { echo "Missing RCLONE_CONFIG_BASE64"; exit 1; }
+          test -n "$GDRIVE_DESTINATION" || { echo "Missing GDRIVE_DESTINATION"; exit 1; }
+
+      - name: Check inputs
+        shell: bash
+        env:
+          ROM_URL: ${{ inputs.rom_url }}
+          ACE6T_OTA_URL: ${{ inputs.ace6t_ota_url }}
+          MY_PRELOAD_URL: ${{ inputs.my_preload_url }}
+          YOUTUBE_URL: ${{ inputs.youtube_morphe_url }}
+        run: |
+          # The builder resolves --ace6t-ota-url and --my-preload itself, and both
+          # accept a local path, which never exists on a fresh runner.
+          test -n "$ROM_URL" || { echo "rom_url is required"; exit 1; }
+          for pair in "rom_url=$ROM_URL" "ace6t_ota_url=$ACE6T_OTA_URL" \
+            "my_preload_url=$MY_PRELOAD_URL" "youtube_morphe_url=$YOUTUBE_URL"; do
+            name="${pair%%=*}"
+            value="${pair#*=}"
+            case "$value" in
+              "") ;;
+              https://*|http://*) ;;
+              *) echo "$name must use HTTP or HTTPS"; exit 1 ;;
+            esac
+          done
+
+      - name: Clone private builder
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: j0ok34n/OPlus_Payload_Mods
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          path: builder
+          lfs: true
+          persist-credentials: false
+
+      # Before the ROM download, which takes long enough that a short-lived
+      # vendor link would expire behind it. payload-extract reads the OTA with
+      # range requests, so this pulls only the odm blob.
+      - name: Extract the odm from the Ace 6T OTA
+        if: ${{ inputs.ace6t_ota_url != '' }}
+        shell: bash
+        working-directory: builder
+        env:
+          ACE6T_OTA_URL: ${{ inputs.ace6t_ota_url }}
+        run: |
+          ./bin/Linux/x86_64/payload-extract extract \
+            --partitions odm --output "$GITHUB_WORKSPACE/odm" "$ACE6T_OTA_URL"
+          test -s "$GITHUB_WORKSPACE/odm/odm.img"
+
+      - name: Download ROM
+        shell: bash
+        env:
+          ROM_URL: ${{ inputs.rom_url }}
+        run: |
+          aria2c --continue=true --max-connection-per-server=16 \
+            --split=16 --min-split-size=10M \
+            --dir="$GITHUB_WORKSPACE" --out=rom-input "$ROM_URL"
+          test -s "$GITHUB_WORKSPACE/rom-input"
+
+      - name: Build recovery ZIP
+        shell: bash
+        working-directory: builder
+        env:
+          BUILD_MODE: ${{ inputs.build_mode }}
+          ACE6T_OTA_URL: ${{ inputs.ace6t_ota_url }}
+          MY_PRELOAD_URL: ${{ inputs.my_preload_url }}
+          ENABLE_DEBLOAT: ${{ inputs.enable_debloat }}
+          ENABLE_YOUTUBE: ${{ inputs.enable_youtube_morphe }}
+          YOUTUBE_URL: ${{ inputs.youtube_morphe_url }}
+          ENABLE_PHOTOS: ${{ inputs.enable_ggphotos_unlimited }}
+          ENABLE_SECURE: ${{ inputs.enable_disable_flag_secure }}
+          ENABLE_LOCK_BYPASS: ${{ inputs.enable_lock_assistant_bypass }}
+          ENABLE_SKIP_VERIFY: ${{ inputs.enable_skip_install_verify }}
+          ENABLE_OTA_BRAND: ${{ inputs.enable_ota_card_brand }}
+          OTA_CARD_SIGNATURE: ${{ inputs.ota_card_signature }}
+        run: |
+          args=("$GITHUB_WORKSPACE/rom-input" --output "$GITHUB_WORKSPACE/build-output")
+
+          # The odm was pulled out before the ROM download, so hand the builder
+          # the file rather than the link it came from, which by now may be dead.
+          [[ -z "$ACE6T_OTA_URL" ]] || args+=(--op15r-odm "$GITHUB_WORKSPACE/odm/odm.img")
+          [[ -z "$MY_PRELOAD_URL" ]] || args+=(--my-preload "$MY_PRELOAD_URL")
+
+          if [[ "$BUILD_MODE" == stock ]]; then
+            # --stock-build already disables every content mod, so the
+            # --skip-* flags below would be redundant.
+            args+=(--stock-build)
+          else
+            [[ "$ENABLE_DEBLOAT" == true ]] || args+=(--skip-debloat)
+            [[ "$ENABLE_PHOTOS" == true ]] || args+=(--skip-photos-spoof)
+            [[ "$ENABLE_SECURE" == true ]] || args+=(--skip-secure-flag)
+            [[ "$ENABLE_LOCK_BYPASS" == true ]] || args+=(--skip-lock-assistant-bypass)
+            [[ "$ENABLE_SKIP_VERIFY" == true ]] || args+=(--skip-install-verify)
+            if [[ "$ENABLE_OTA_BRAND" == true ]]; then
+              [[ -z "$OTA_CARD_SIGNATURE" ]] \
+                || args+=(--ota-card-signature "$OTA_CARD_SIGNATURE")
+            else
+              args+=(--skip-ota-card-brand)
+            fi
+            if [[ "$ENABLE_YOUTUBE" == true ]]; then
+              [[ -z "$YOUTUBE_URL" ]] || args+=(--youtube-morphe-url "$YOUTUBE_URL")
+            else
+              args+=(--skip-youtube-morphe)
+            fi
+          fi
+
+          set +e
+          ./start-oplus.sh "${args[@]}" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          build_status=${PIPESTATUS[0]}
+          set -e
+          exit "$build_status"
+
+      - name: Upload output to Google Drive
+        shell: bash
+        env:
+          RCLONE_CONFIG_BASE64: ${{ secrets.RCLONE_CONFIG_BASE64 }}
+          GDRIVE_DESTINATION: ${{ secrets.GDRIVE_DESTINATION }}
+          ACE6T_OTA_URL: ${{ inputs.ace6t_ota_url }}
+          MY_PRELOAD_URL: ${{ inputs.my_preload_url }}
+        run: |
+          config="$RUNNER_TEMP/rclone.conf"
+          printf '%s' "$RCLONE_CONFIG_BASE64" | base64 --decode > "$config"
+          chmod 600 "$config"
+
+          mapfile -t outputs < <(find "$GITHUB_WORKSPACE/build-output" \
+            -maxdepth 1 -type f -name '*_Recovery.zip' -print)
+          [[ ${#outputs[@]} -eq 1 ]] || {
+            echo "Expected exactly one recovery ZIP, found ${#outputs[@]}"
+            exit 1
+          }
+
+          output="${outputs[0]}"
+          filename="$(basename "$output")"
+          # Only the Drive folder name is a decision this workflow owns. Everything
+          # else the summary reports comes out of the package, so adding or
+          # renaming a mod in the builder does not silently leave this stale.
+          report="$(unzip -p "$output" patch-report.txt 2>/dev/null || true)"
+          [[ -n "$report" ]] || { echo "Package has no patch-report.txt"; exit 1; }
+
+          # The builder names the ZIP <DEVICE>_<Mods|Stock>_<build id>_Recovery.zip.
+          case "$filename" in
+            X9U_*) device=Oppo_Find_X9_Ultra ;;
+            OP15R_*) device=OnePlus_15R ;;
+            *) echo "Cannot detect device from output filename: $filename"; exit 1 ;;
+          esac
+
+          model="$(sed -n 's/^Device profile: \(.*\) (.*/\1/p' <<< "$report" | head -n 1)"
+          abl_version="$(sed -n 's/^ABL donor version: //p' <<< "$report" | head -n 1)"
+          build_id="$(sed -n 's/^Build display ID: //p' <<< "$report" | head -n 1)"
+          case "$filename" in
+            *_Stock_*) mode=stock ;;
+            *_Mods_*) mode=mods ;;
+            *) echo "Cannot detect build mode from output filename: $filename"; exit 1 ;;
+          esac
+
+          destination="${GDRIVE_DESTINATION%/}/$device"
+          output_sha256="$(sha256sum "$output" | awk '{print $1}')"
+          # A Drive upload is one sequential stream, so throughput is capped by
+          # the chunk size divided by the round trip to Google. rclone defaults to
+          # 8M chunks; 256M cuts the number of round trips by 32 and costs 256M of
+          # the runner's RAM for the single transfer this step runs.
+          rclone --config "$config" copyto --progress \
+            --drive-chunk-size 256M \
+            --drive-pacer-min-sleep 10ms \
+            "$output" "$destination/$filename"
+
+          file_id="$(rclone --config "$config" lsjson \
+            "$destination/$filename" --stat | \
+            python3 -c 'import json, sys; print(json.load(sys.stdin).get("ID", ""))')"
+          [[ -n "$file_id" ]] || {
+            echo "Unable to read the uploaded Google Drive file ID"
+            exit 1
+          }
+          drive_url="https://drive.google.com/file/d/$file_id"
+
+          # The builder writes one "<mod>: true|false" line per mod it knows about.
+          applied="$(sed -n 's/^\([A-Za-z][^:]*\): true$/\1/p' <<< "$report")"
+
+          {
+            echo "## Build complete"
+            echo
+            echo "- Model: **$model**"
+            echo "- Build mode: **$mode**"
+            [[ -z "$build_id" ]] || echo "- Build: \`$build_id\`"
+            if [[ -n "$applied" ]]; then
+              echo "- Mods applied:"
+              sed 's/^/  - /' <<< "$applied"
+            else
+              echo "- Content mods: none"
+            fi
+            if [[ "$mode" == stock ]]; then
+              echo "- Stock recovery.img is restored by this package"
+            else
+              echo "- The current recovery is left untouched"
+            fi
+            echo "- Always included:"
+            echo "  - abl $abl_version (still GBL vulnerability)"
+            echo "  - GBL Chainload mode 1"
+            [[ -z "$ACE6T_OTA_URL" ]] || echo "- ODM taken from: \`$ACE6T_OTA_URL\`"
+            [[ -z "$MY_PRELOAD_URL" ]] || echo "- Supplied my_preload: \`$MY_PRELOAD_URL\`"
+            echo "- Download URL: [$filename]($drive_url)"
+            echo "- SHA-256: \`$output_sha256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize failure
+        if: ${{ failure() }}
+        shell: bash
+        env:
+          BUILD_MODE: ${{ inputs.build_mode }}
+          ACE6T_OTA_URL: ${{ inputs.ace6t_ota_url }}
+          MY_PRELOAD_URL: ${{ inputs.my_preload_url }}
+          ENABLE_DEBLOAT: ${{ inputs.enable_debloat }}
+          ENABLE_YOUTUBE: ${{ inputs.enable_youtube_morphe }}
+          ENABLE_PHOTOS: ${{ inputs.enable_ggphotos_unlimited }}
+          ENABLE_SECURE: ${{ inputs.enable_disable_flag_secure }}
+          ENABLE_LOCK_BYPASS: ${{ inputs.enable_lock_assistant_bypass }}
+          ENABLE_SKIP_VERIFY: ${{ inputs.enable_skip_install_verify }}
+          ENABLE_OTA_BRAND: ${{ inputs.enable_ota_card_brand }}
+          OTA_CARD_SIGNATURE: ${{ inputs.ota_card_signature }}
+        run: |
+          log="$GITHUB_WORKSPACE/build.log"
+          model="Unknown"
+          abl_version=""
+          reason="Workflow stopped before the builder reported an error"
+          hint=""
+
+          if [[ -s "$log" ]]; then
+            detected="$(sed -n 's/^\[INFO\] Detected \(.*\) (project ID: .*/\1/p' "$log" | tail -n 1)"
+            project_id="$(sed -n 's/^\[ERROR\] Unsupported project ID from payload: //p' "$log" | tail -n 1)"
+            arb_warning="$(sed -n 's/^\[WARN\] \(Anti-rollback is enabled.*\)/\1/p' "$log" | tail -n 1)"
+            last_error="$(sed -n 's/^\[ERROR\] //p' "$log" | tail -n 1)"
+
+            if [[ -n "$detected" ]]; then
+              model="$detected"
+            elif [[ -n "$project_id" ]]; then
+              model="Unknown (project ID: $project_id)"
+            fi
+            case "$model" in
+              "OPPO Find X9 Ultra") abl_version=16.0.6 ;;
+              "OnePlus 15R") abl_version=16.0.1 ;;
+            esac
+            [[ -z "$last_error" ]] || reason="$last_error"
+            [[ -z "$arb_warning" ]] || reason="$arb_warning; $reason"
+
+            # The two inputs whose absence the builder can only report at runtime.
+            case "$reason" in
+              *"require --ace6t-ota-url"*)
+                hint="Re-run with ace6t_ota_url set to a OnePlus Ace 6T OTA URL." ;;
+              *"--my-preload"*)
+                hint="Re-run with my_preload_url set to a stock my_preload.img URL." ;;
+            esac
+          fi
+
+          {
+            echo "## Build failed"
+            echo
+            echo "- Model: **$model**"
+            echo "- Build mode: **$BUILD_MODE**"
+            if [[ "$BUILD_MODE" == stock ]]; then
+              echo "- Content mods: none"
+            else
+              echo "- Mods requested:"
+              [[ "$ENABLE_DEBLOAT" == true ]] && echo "  - Debloat"
+              [[ "$ENABLE_YOUTUBE" == true ]] && echo "  - YouTube Morphe"
+              [[ "$ENABLE_PHOTOS" == true ]] && echo "  - GGPhotosUnlimited"
+              [[ "$ENABLE_SECURE" == true ]] && echo "  - DisableFlagSecure"
+              [[ "$ENABLE_LOCK_BYPASS" == true ]] && echo "  - LockAssistantBypass"
+              [[ "$ENABLE_SKIP_VERIFY" == true ]] && echo "  - SkipInstallVerify"
+              [[ "$ENABLE_OTA_BRAND" == true ]] \
+                && echo "  - OtaCardBrand (${OTA_CARD_SIGNATURE:-ViOS})"
+              echo "  - DisableSafeMediaVolume"
+              echo "  - AVB fstab patch"
+              echo "  - DisableOTA"
+            fi
+            [[ -z "$abl_version" ]] || echo "- abl $abl_version (still GBL vulnerability)"
+            [[ -z "$ACE6T_OTA_URL" ]] || echo "- ODM taken from: \`$ACE6T_OTA_URL\`"
+            [[ -z "$MY_PRELOAD_URL" ]] || echo "- Supplied my_preload: \`$MY_PRELOAD_URL\`"
+            echo "- Reason: \`$reason\`"
+            [[ -z "$hint" ]] || echo "- Next step: $hint"
+          } >> "$GITHUB_STEP_SUMMARY"
