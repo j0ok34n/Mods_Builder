@@ -48,14 +48,14 @@ the backup must run while the old repository and its secrets still exist.
 Three workflows sit in **Actions**. The first two build OPlus devices, and
 which one you pick is the build mode:
 
-- **OPlus Payload Mods Builder** applies every content mod. Only
-  LockAssistantBypass and OtaCardBrand have a toggle; Debloat, YouTube Morphe,
-  GGPhotosUnlimited, DisableFlagSecure, SkipInstallVerify,
-  DisableSafeMediaVolume, the AVB fstab patch and DisableOTA always go in.
+- **OPlus Payload Mods Builder** enables Debloat, YouTube Morphe,
+  GGPhotosUnlimited, DisableFlagSecure, LockAssistantBypass, SkipInstallVerify,
+  DisableOTA and DevStatusSpoof by default, with an individual toggle for each.
+  DisableSafeMediaVolume and the AVB fstab patch always go in.
   `youtube_morphe_url` pins a specific module ZIP; blank picks the latest.
-  OtaCardBrand is off by default, and `ota_card_signature` is the name it puts
-  in front of the version when you turn it on. The device keeps its current
-  recovery.
+  OtaCardBrand is off by default: leave `ota_card_signature` blank, or enter a
+  name to enable the prefix on the OTA card. There is no separate branding
+  toggle. The device keeps its current recovery.
 - **OPlus Stock Builder** applies no content mod at all. The package still
   carries the vulnerable ABL donor and the GBL Chainload EFISP, and it restores
   the stock `recovery.img` from the payload. Its form asks for three things,
@@ -65,6 +65,19 @@ Both flash the ABL donor and the GBL Chainload mode 1 EFISP, and both share one
 job defined in `_build.yml`, so they cannot drift apart. The output filename
 selects the `Oppo_Find_X9_Ultra` or `OnePlus_15R` subdirectory below
 `GDRIVE_DESTINATION`.
+
+For X9U with LockAssistantBypass enabled, `lock_assistant_carrier_mode` selects
+`operator` (default, only spoof the operator to `00 FF`) or `full` (overlay the
+profile snapshot while preserving live DCS, BP timestamps and random codes).
+OnePlus 15R ignores this carrier component. Photos and screenshot patches select
+their supported ColorOS 16/17 behavior in the builder; no Android-version input
+is needed.
+
+Uncheck `enable_disable_ota` to pass `--skip-disable-ota` and keep stock OTA
+endpoints and signing keys. Uncheck `enable_dev_status_spoof` to pass
+`--skip-dev-status-spoof`; when enabled, the builder also installs the ADB-status
+init override that disables USB ADB on the supported ROM. Stock builds ignore
+all mod inputs and use `--stock-build`.
 
 ## Xiaomi
 

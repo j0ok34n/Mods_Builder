@@ -22,21 +22,59 @@ on:
         required: false
         type: string
         default: ""
-      enable_lock_assistant_bypass:
-        description: Carrier-lock bypass
+      enable_debloat:
+        description: Debloat
         required: true
         type: boolean
         default: true
-      enable_ota_card_brand:
-        description: Put a name in front of the version on the OTA card
+      enable_youtube_morphe:
+        description: Integrate YouTube Morphe
         required: true
         type: boolean
-        default: false
+        default: true
+      enable_ggphotos_unlimited:
+        description: Google Photos Pixel XL spoof
+        required: true
+        type: boolean
+        default: true
+      enable_disable_flag_secure:
+        description: Screenshot and screen-capture bypass
+        required: true
+        type: boolean
+        default: true
+      enable_lock_assistant_bypass:
+        description: LockAssistant bypass, including carrier spoof on X9U
+        required: true
+        type: boolean
+        default: true
+      lock_assistant_carrier_mode:
+        description: X9U carrier mode - operator only or full snapshot; requires bypass
+        required: true
+        type: choice
+        default: operator
+        options:
+          - operator
+          - full
+      enable_skip_install_verify:
+        description: Skip the install-time verifier broadcast
+        required: true
+        type: boolean
+        default: true
+      enable_disable_ota:
+        description: Disable OTA endpoints and signing keys
+        required: true
+        type: boolean
+        default: true
+      enable_dev_status_spoof:
+        description: Hide developer settings and ADB status - disables USB ADB
+        required: true
+        type: boolean
+        default: true
       ota_card_signature:
-        description: The name to put there
+        description: OTA card name - blank disables branding
         required: false
         type: string
-        default: ViOS
+        default: ""
 
 permissions:
   contents: read
@@ -51,6 +89,13 @@ jobs:
       ace6t_ota_url: ${{ inputs.ace6t_ota_url }}
       my_preload_url: ${{ inputs.my_preload_url }}
       youtube_morphe_url: ${{ inputs.youtube_morphe_url }}
+      enable_debloat: ${{ inputs.enable_debloat }}
+      enable_youtube_morphe: ${{ inputs.enable_youtube_morphe }}
+      enable_ggphotos_unlimited: ${{ inputs.enable_ggphotos_unlimited }}
+      enable_disable_flag_secure: ${{ inputs.enable_disable_flag_secure }}
       enable_lock_assistant_bypass: ${{ inputs.enable_lock_assistant_bypass }}
-      enable_ota_card_brand: ${{ inputs.enable_ota_card_brand }}
+      lock_assistant_carrier_mode: ${{ inputs.lock_assistant_carrier_mode }}
+      enable_skip_install_verify: ${{ inputs.enable_skip_install_verify }}
+      enable_disable_ota: ${{ inputs.enable_disable_ota }}
+      enable_dev_status_spoof: ${{ inputs.enable_dev_status_spoof }}
       ota_card_signature: ${{ inputs.ota_card_signature }}

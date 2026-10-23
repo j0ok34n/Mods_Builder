@@ -43,18 +43,26 @@ on:
         required: false
         type: boolean
         default: true
+      lock_assistant_carrier_mode:
+        required: false
+        type: string
+        default: operator
       enable_skip_install_verify:
         required: false
         type: boolean
         default: true
-      enable_ota_card_brand:
+      enable_disable_ota:
         required: false
         type: boolean
-        default: false
+        default: true
+      enable_dev_status_spoof:
+        required: false
+        type: boolean
+        default: true
       ota_card_signature:
         required: false
         type: string
-        default: ViOS
+        default: ""
     secrets:
       PRIVATE_REPO_TOKEN:
         required: true
@@ -104,11 +112,27 @@ jobs:
       - name: Check inputs
         shell: bash
         env:
+          BUILD_MODE: ${{ inputs.build_mode }}
           ROM_URL: ${{ inputs.rom_url }}
           ACE6T_OTA_URL: ${{ inputs.ace6t_ota_url }}
           MY_PRELOAD_URL: ${{ inputs.my_preload_url }}
           YOUTUBE_URL: ${{ inputs.youtube_morphe_url }}
+          CARRIER_MODE: ${{ inputs.lock_assistant_carrier_mode }}
+          OTA_CARD_SIGNATURE: ${{ inputs.ota_card_signature }}
         run: |
+          case "$BUILD_MODE" in
+            mods|stock) ;;
+            *) echo "build_mode must be mods or stock"; exit 1 ;;
+          esac
+          case "$CARRIER_MODE" in
+            operator|full) ;;
+            *) echo "lock_assistant_carrier_mode must be operator or full"; exit 1 ;;
+          esac
+          if [[ "$BUILD_MODE" == mods && -n "$OTA_CARD_SIGNATURE" \
+              && ! "$OTA_CARD_SIGNATURE" =~ [^[:space:]] ]]; then
+            echo "ota_card_signature must contain a non-whitespace character, or be blank"
+            exit 1
+          fi
           # The builder resolves --ace6t-ota-url and --my-preload itself, and both
           # accept a local path, which never exists on a fresh runner.
           test -n "$ROM_URL" || { echo "rom_url is required"; exit 1; }
@@ -170,8 +194,10 @@ jobs:
           ENABLE_PHOTOS: ${{ inputs.enable_ggphotos_unlimited }}
           ENABLE_SECURE: ${{ inputs.enable_disable_flag_secure }}
           ENABLE_LOCK_BYPASS: ${{ inputs.enable_lock_assistant_bypass }}
+          CARRIER_MODE: ${{ inputs.lock_assistant_carrier_mode }}
           ENABLE_SKIP_VERIFY: ${{ inputs.enable_skip_install_verify }}
-          ENABLE_OTA_BRAND: ${{ inputs.enable_ota_card_brand }}
+          ENABLE_DISABLE_OTA: ${{ inputs.enable_disable_ota }}
+          ENABLE_DEV_STATUS: ${{ inputs.enable_dev_status_spoof }}
           OTA_CARD_SIGNATURE: ${{ inputs.ota_card_signature }}
         run: |
           args=("$GITHUB_WORKSPACE/rom-input" --output "$GITHUB_WORKSPACE/build-output")
@@ -189,14 +215,15 @@ jobs:
             [[ "$ENABLE_DEBLOAT" == true ]] || args+=(--skip-debloat)
             [[ "$ENABLE_PHOTOS" == true ]] || args+=(--skip-photos-spoof)
             [[ "$ENABLE_SECURE" == true ]] || args+=(--skip-secure-flag)
-            [[ "$ENABLE_LOCK_BYPASS" == true ]] || args+=(--skip-lock-assistant-bypass)
-            [[ "$ENABLE_SKIP_VERIFY" == true ]] || args+=(--skip-install-verify)
-            if [[ "$ENABLE_OTA_BRAND" == true ]]; then
-              [[ -z "$OTA_CARD_SIGNATURE" ]] \
-                || args+=(--ota-card-signature "$OTA_CARD_SIGNATURE")
+            if [[ "$ENABLE_LOCK_BYPASS" == true ]]; then
+              args+=(--lock-assistant-carrier-mode "$CARRIER_MODE")
             else
-              args+=(--skip-ota-card-brand)
+              args+=(--skip-lock-assistant-bypass)
             fi
+            [[ "$ENABLE_SKIP_VERIFY" == true ]] || args+=(--skip-install-verify)
+            [[ "$ENABLE_DISABLE_OTA" == true ]] || args+=(--skip-disable-ota)
+            [[ "$ENABLE_DEV_STATUS" == true ]] || args+=(--skip-dev-status-spoof)
+            [[ -z "$OTA_CARD_SIGNATURE" ]] || args+=(--ota-card-signature "$OTA_CARD_SIGNATURE")
             if [[ "$ENABLE_YOUTUBE" == true ]]; then
               [[ -z "$YOUTUBE_URL" ]] || args+=(--youtube-morphe-url "$YOUTUBE_URL")
             else
@@ -247,6 +274,7 @@ jobs:
           model="$(sed -n 's/^Device profile: \(.*\) (.*/\1/p' <<< "$report" | head -n 1)"
           abl_version="$(sed -n 's/^ABL donor version: //p' <<< "$report" | head -n 1)"
           build_id="$(sed -n 's/^Build display ID: //p' <<< "$report" | head -n 1)"
+          carrier_mode="$(sed -n 's/^LockAssistantBypass carrier mode: //p' <<< "$report" | head -n 1)"
           case "$filename" in
             *_Stock_*) mode=stock ;;
             *_Mods_*) mode=mods ;;
@@ -282,6 +310,7 @@ jobs:
             echo "- Model: **$model**"
             echo "- Build mode: **$mode**"
             [[ -z "$build_id" ]] || echo "- Build: \`$build_id\`"
+            [[ -z "$carrier_mode" ]] || echo "- Carrier-lock mode: \`$carrier_mode\`"
             if [[ -n "$applied" ]]; then
               echo "- Mods applied:"
               sed 's/^/  - /' <<< "$applied"
@@ -314,8 +343,10 @@ jobs:
           ENABLE_PHOTOS: ${{ inputs.enable_ggphotos_unlimited }}
           ENABLE_SECURE: ${{ inputs.enable_disable_flag_secure }}
           ENABLE_LOCK_BYPASS: ${{ inputs.enable_lock_assistant_bypass }}
+          CARRIER_MODE: ${{ inputs.lock_assistant_carrier_mode }}
           ENABLE_SKIP_VERIFY: ${{ inputs.enable_skip_install_verify }}
-          ENABLE_OTA_BRAND: ${{ inputs.enable_ota_card_brand }}
+          ENABLE_DISABLE_OTA: ${{ inputs.enable_disable_ota }}
+          ENABLE_DEV_STATUS: ${{ inputs.enable_dev_status_spoof }}
           OTA_CARD_SIGNATURE: ${{ inputs.ota_card_signature }}
         run: |
           log="$GITHUB_WORKSPACE/build.log"
@@ -344,7 +375,7 @@ jobs:
 
             # The two inputs whose absence the builder can only report at runtime.
             case "$reason" in
-              *"require --ace6t-ota-url"*)
+              *"require --op15r-odm or --ace6t-ota-url"*)
                 hint="Re-run with ace6t_ota_url set to a OnePlus Ace 6T OTA URL." ;;
               *"--my-preload"*)
                 hint="Re-run with my_preload_url set to a stock my_preload.img URL." ;;
@@ -364,13 +395,15 @@ jobs:
               [[ "$ENABLE_YOUTUBE" == true ]] && echo "  - YouTube Morphe"
               [[ "$ENABLE_PHOTOS" == true ]] && echo "  - GGPhotosUnlimited"
               [[ "$ENABLE_SECURE" == true ]] && echo "  - DisableFlagSecure"
-              [[ "$ENABLE_LOCK_BYPASS" == true ]] && echo "  - LockAssistantBypass"
+              [[ "$ENABLE_LOCK_BYPASS" == true ]] \
+                && echo "  - LockAssistantBypass (X9U carrier mode: $CARRIER_MODE)"
               [[ "$ENABLE_SKIP_VERIFY" == true ]] && echo "  - SkipInstallVerify"
-              [[ "$ENABLE_OTA_BRAND" == true ]] \
-                && echo "  - OtaCardBrand (${OTA_CARD_SIGNATURE:-ViOS})"
+              [[ "$ENABLE_DISABLE_OTA" == true ]] && echo "  - DisableOTA"
+              [[ "$ENABLE_DEV_STATUS" == true ]] && echo "  - DevStatusSpoof"
+              [[ "$OTA_CARD_SIGNATURE" =~ [^[:space:]] ]] \
+                && echo "  - OtaCardBrand ($OTA_CARD_SIGNATURE)"
               echo "  - DisableSafeMediaVolume"
               echo "  - AVB fstab patch"
-              echo "  - DisableOTA"
             fi
             [[ -z "$abl_version" ]] || echo "- abl $abl_version (still GBL vulnerability)"
             [[ -z "$ACE6T_OTA_URL" ]] || echo "- ODM taken from: \`$ACE6T_OTA_URL\`"
