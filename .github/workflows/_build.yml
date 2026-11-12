@@ -142,7 +142,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: j0ok34n/OPlus_Payload_Mods
-          ref: coloros7
+          ref: main
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           path: builder
           lfs: true
