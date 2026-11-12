@@ -66,9 +66,9 @@ job defined in `_build.yml`, so they cannot drift apart. The output filename
 selects the `Oppo_Find_X9_Ultra` or `OnePlus_15R` subdirectory below
 `GDRIVE_DESTINATION`.
 
-For X9U with LockAssistantBypass enabled, `lock_assistant_carrier_mode` selects
-`operator` (default, only spoof the operator to `00 FF`) or `full` (overlay the
-profile snapshot while preserving live DCS, BP timestamps and random codes).
+For X9U with LockAssistantBypass enabled, the builder always overlays the
+profile snapshot, including operator `00 FF`, while preserving live DCS, BP
+timestamps and random codes. There is no carrier mode input.
 OnePlus 15R ignores this carrier component. Photos and screenshot patches select
 their supported ColorOS 16/17 behavior in the builder; no Android-version input
 is needed.

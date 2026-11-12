@@ -43,10 +43,6 @@ on:
         required: false
         type: boolean
         default: true
-      lock_assistant_carrier_mode:
-        required: false
-        type: string
-        default: operator
       enable_skip_install_verify:
         required: false
         type: boolean
@@ -117,16 +113,11 @@ jobs:
           ACE6T_OTA_URL: ${{ inputs.ace6t_ota_url }}
           MY_PRELOAD_URL: ${{ inputs.my_preload_url }}
           YOUTUBE_URL: ${{ inputs.youtube_morphe_url }}
-          CARRIER_MODE: ${{ inputs.lock_assistant_carrier_mode }}
           OTA_CARD_SIGNATURE: ${{ inputs.ota_card_signature }}
         run: |
           case "$BUILD_MODE" in
             mods|stock) ;;
             *) echo "build_mode must be mods or stock"; exit 1 ;;
-          esac
-          case "$CARRIER_MODE" in
-            operator|full) ;;
-            *) echo "lock_assistant_carrier_mode must be operator or full"; exit 1 ;;
           esac
           if [[ "$BUILD_MODE" == mods && -n "$OTA_CARD_SIGNATURE" \
               && ! "$OTA_CARD_SIGNATURE" =~ [^[:space:]] ]]; then
@@ -194,7 +185,6 @@ jobs:
           ENABLE_PHOTOS: ${{ inputs.enable_ggphotos_unlimited }}
           ENABLE_SECURE: ${{ inputs.enable_disable_flag_secure }}
           ENABLE_LOCK_BYPASS: ${{ inputs.enable_lock_assistant_bypass }}
-          CARRIER_MODE: ${{ inputs.lock_assistant_carrier_mode }}
           ENABLE_SKIP_VERIFY: ${{ inputs.enable_skip_install_verify }}
           ENABLE_DISABLE_OTA: ${{ inputs.enable_disable_ota }}
           ENABLE_DEV_STATUS: ${{ inputs.enable_dev_status_spoof }}
@@ -215,11 +205,7 @@ jobs:
             [[ "$ENABLE_DEBLOAT" == true ]] || args+=(--skip-debloat)
             [[ "$ENABLE_PHOTOS" == true ]] || args+=(--skip-photos-spoof)
             [[ "$ENABLE_SECURE" == true ]] || args+=(--skip-secure-flag)
-            if [[ "$ENABLE_LOCK_BYPASS" == true ]]; then
-              args+=(--lock-assistant-carrier-mode "$CARRIER_MODE")
-            else
-              args+=(--skip-lock-assistant-bypass)
-            fi
+            [[ "$ENABLE_LOCK_BYPASS" == true ]] || args+=(--skip-lock-assistant-bypass)
             [[ "$ENABLE_SKIP_VERIFY" == true ]] || args+=(--skip-install-verify)
             [[ "$ENABLE_DISABLE_OTA" == true ]] || args+=(--skip-disable-ota)
             [[ "$ENABLE_DEV_STATUS" == true ]] || args+=(--skip-dev-status-spoof)
@@ -274,7 +260,7 @@ jobs:
           model="$(sed -n 's/^Device profile: \(.*\) (.*/\1/p' <<< "$report" | head -n 1)"
           abl_version="$(sed -n 's/^ABL donor version: //p' <<< "$report" | head -n 1)"
           build_id="$(sed -n 's/^Build display ID: //p' <<< "$report" | head -n 1)"
-          carrier_mode="$(sed -n 's/^LockAssistantBypass carrier mode: //p' <<< "$report" | head -n 1)"
+          carrier_overlay="$(sed -n 's/^LockAssistantBypass carrier overlay: //p' <<< "$report" | head -n 1)"
           case "$filename" in
             *_Stock_*) mode=stock ;;
             *_Mods_*) mode=mods ;;
@@ -310,7 +296,7 @@ jobs:
             echo "- Model: **$model**"
             echo "- Build mode: **$mode**"
             [[ -z "$build_id" ]] || echo "- Build: \`$build_id\`"
-            [[ -z "$carrier_mode" ]] || echo "- Carrier-lock mode: \`$carrier_mode\`"
+            [[ -z "$carrier_overlay" ]] || echo "- Carrier-lock overlay: \`$carrier_overlay\`"
             if [[ -n "$applied" ]]; then
               echo "- Mods applied:"
               sed 's/^/  - /' <<< "$applied"
@@ -343,7 +329,6 @@ jobs:
           ENABLE_PHOTOS: ${{ inputs.enable_ggphotos_unlimited }}
           ENABLE_SECURE: ${{ inputs.enable_disable_flag_secure }}
           ENABLE_LOCK_BYPASS: ${{ inputs.enable_lock_assistant_bypass }}
-          CARRIER_MODE: ${{ inputs.lock_assistant_carrier_mode }}
           ENABLE_SKIP_VERIFY: ${{ inputs.enable_skip_install_verify }}
           ENABLE_DISABLE_OTA: ${{ inputs.enable_disable_ota }}
           ENABLE_DEV_STATUS: ${{ inputs.enable_dev_status_spoof }}
@@ -396,7 +381,7 @@ jobs:
               [[ "$ENABLE_PHOTOS" == true ]] && echo "  - GGPhotosUnlimited"
               [[ "$ENABLE_SECURE" == true ]] && echo "  - DisableFlagSecure"
               [[ "$ENABLE_LOCK_BYPASS" == true ]] \
-                && echo "  - LockAssistantBypass (X9U carrier mode: $CARRIER_MODE)"
+                && echo "  - LockAssistantBypass (X9U full carrier snapshot overlay)"
               [[ "$ENABLE_SKIP_VERIFY" == true ]] && echo "  - SkipInstallVerify"
               [[ "$ENABLE_DISABLE_OTA" == true ]] && echo "  - DisableOTA"
               [[ "$ENABLE_DEV_STATUS" == true ]] && echo "  - DevStatusSpoof"
